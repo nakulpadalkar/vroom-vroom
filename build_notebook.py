@@ -1,0 +1,204 @@
+import json
+
+cells = []
+
+# Cell 1: Imports
+cells.append({
+    "cell_type": "code",
+    "execution_count": 1,
+    "metadata": {},
+    "outputs": [],
+    "source": [
+        "from bs4 import BeautifulSoup\n",
+        "import requests\n",
+        "import json\n",
+        "import pandas as pd\n",
+        "import os\n",
+        "from tqdm import tqdm"
+    ]
+})
+
+# Cell 2: First stage parser
+cells.append({
+    "cell_type": "code",
+    "execution_count": 2,
+    "metadata": {},
+    "outputs": [],
+    "source": [
+        "def parse_first_stage_cards(html_content):\n",
+        "    soup = BeautifulSoup(html_content, 'html.parser')\n",
+        "    all_links = []\n",
+        "    \n",
+        "    link_tags = soup.select('a[data-test=\"cardLinkCover\"]')\n",
+        "\n",
+        "    for tag in link_tags:\n",
+        "        relative_link = tag.get(\"href\")\n",
+        "        full_link = \"https://www.truecar.com\" + relative_link if relative_link else None\n",
+        "        \n",
+        "        if full_link:\n",
+        "            car = {\"url\": full_link}\n",
+        "            sr_span = tag.find(\"span\", class_=\"sr-only\")\n",
+        "            if sr_span:\n",
+        "                raw_title = sr_span.text.strip()\n",
+        "                if raw_title.startswith(\"View details for \"):\n",
+        "                    raw_title = raw_title.replace(\"View details for \", \"\", 1).strip()\n",
+        "                car[\"title\"] = raw_title\n",
+        "            all_links.append(car)\n",
+        "    return all_links\n"
+    ]
+})
+
+# Cell 3: Second stage parser
+cells.append({
+    "cell_type": "code",
+    "execution_count": 3,
+    "metadata": {},
+    "outputs": [],
+    "source": [
+        "def extract_vehicle_details(html_content, url):\n",
+        "    soup = BeautifulSoup(html_content, \"html.parser\")\n",
+        "    car_data = {\"url\": url}\n",
+        "\n",
+        "    overview_panel = soup.find(id=\"tabs_panel__r_5c__0\")\n",
+        "    if overview_panel:\n",
+        "        details_container = overview_panel.find(\"div\", {\"data-test\": \"vehicleDetailsOverviewDetails\"})\n",
+        "        if details_container:\n",
+        "            items = details_container.find_all(\"div\", class_=\"flex items-center justify-between\")\n",
+        "            for item in items:\n",
+        "                spans = item.find_all(\"span\")\n",
+        "                if len(spans) >= 2:\n",
+        "                    key = spans[0].text.strip().lower().replace(\" \", \"_\")\n",
+        "                    val = spans[1].text.strip()\n",
+        "                    if key:\n",
+        "                        car_data[key] = val\n",
+        "        highlights_container = overview_panel.find(\"div\", {\"data-test\": \"vehicleDetailsOverviewKeyHighlights\"})\n",
+        "        if highlights_container:\n",
+        "            highlights = highlights_container.find_all(\"div\", {\"data-test\": \"vehicleDetailsOverviewKeyHighlight\"})\n",
+        "            car_data[\"overview_highlights\"] = \", \".join([h.text.strip() for h in highlights])\n",
+        "\n",
+        "    features_panel = soup.find(id=\"tabs_panel__r_5c__1\")\n",
+        "    if features_panel:\n",
+        "        features_container = features_panel.find(\"div\", {\"data-test\": \"vehicleDetailsKeyFeatures\"})\n",
+        "        if features_container:\n",
+        "            categories = features_container.find_all(\"div\", class_=\"flex gap-x-8 items-start\")\n",
+        "            for cat in categories:\n",
+        "                title_el = cat.find(\"div\", class_=\"text-18\")\n",
+        "                if title_el:\n",
+        "                    title = title_el.text.strip().lower().replace(\" \", \"_\").replace(\"&\", \"and\")\n",
+        "                    lis = cat.find_all(\"li\")\n",
+        "                    car_data[f\"feature_{title}\"] = \", \".join([li.text.strip() for li in lis])\n",
+        "\n",
+        "    specs_panel = soup.find(id=\"tabs_panel__r_5c__2\")\n",
+        "    if specs_panel:\n",
+        "        categories = specs_panel.find_all(\"div\", class_=\"text-12\")\n",
+        "        for cat in categories:\n",
+        "            title_el = cat.find(\"div\", class_=\"text-18\")\n",
+        "            if title_el:\n",
+        "                lis = cat.find_all(\"li\")\n",
+        "                for li in lis:\n",
+        "                    span = li.find(\"span\")\n",
+        "                    div = li.find(\"div\", class_=\"flex text-12\")\n",
+        "                    if span and div:\n",
+        "                        car_data[f\"spec_{span.text.strip().lower().replace(' ', '_')}\"] = div.text.strip()\n",
+        "\n",
+        "    history_panel = soup.find(id=\"tabs_panel__r_5c__3\")\n",
+        "    if history_panel:\n",
+        "        history_tab = history_panel.find(id=\"history-tab\")\n",
+        "        if history_tab:\n",
+        "            lis = history_tab.find_all(\"li\")\n",
+        "            history_items = []\n",
+        "            for li in lis:\n",
+        "                text = li.text.strip().replace(\" \\n\", \"\").strip()\n",
+        "                history_items.append(text)\n",
+        "            car_data[\"history\"] = \", \".join(history_items)\n",
+        "\n",
+        "    return car_data\n"
+    ]
+})
+
+# Cell 4: Scraper coordination
+cells.append({
+    "cell_type": "code",
+    "execution_count": 4,
+    "metadata": {},
+    "outputs": [],
+    "source": [
+        "def scrape_city_state(city, state, max_pages=5):\n",
+        "    city_slug = city.lower().replace(\" \", \"-\")\n",
+        "    state_slug = state.lower()\n",
+        "    location_key = f\"{city_slug}_{state_slug}\"\n",
+        "    os.makedirs(\"./data\", exist_ok=True)\n",
+        "\n",
+        "    all_links = []\n",
+        "    for i in tqdm(range(1, max_pages + 1), desc=f\"{location_key} - Search Pages\"):\n",
+        "        url = f\"https://www.truecar.com/used-cars-for-sale/listings/location-{city_slug}-{state_slug}/?page={i}\"\n",
+        "        response = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})\n",
+        "        # Note: If this returns 403, replace `requests.get` with Selenium or cloudscraper\n",
+        "        page_links = parse_first_stage_cards(response.text)\n",
+        "        all_links.extend(page_links)\n",
+        "\n",
+        "    json_path = f\"./data/truecar_links_{location_key}.json\"\n",
+        "    with open(json_path, \"w\") as f:\n",
+        "        json.dump(all_links, f, indent=2)\n",
+        "\n",
+        "    print(f\"Saved {len(all_links)} links for {city.title()}, {state.upper()}\")\n",
+        "    \n",
+        "    results = []\n",
+        "    for entry in tqdm(all_links, desc=\"Scraping car details\"):\n",
+        "        response = requests.get(entry[\"url\"], headers={'User-Agent': 'Mozilla/5.0'})\n",
+        "        car_info = extract_vehicle_details(response.text, entry[\"url\"])\n",
+        "        car_info[\"title\"] = entry.get(\"title\", \"\")\n",
+        "        results.append(car_info)\n",
+        "\n",
+        "    df = pd.DataFrame(results)\n",
+        "    output_csv = f\"./data/truecar_details_{location_key}.csv\"\n",
+        "    output_json = f\"./data/truecar_details_{location_key}.json\"\n",
+        "    df.to_csv(output_csv, index=False)\n",
+        "    with open(output_json, \"w\") as f:\n",
+        "        json.dump(results, f, indent=2)\n",
+        "    print(f\"Saved complete details to {output_csv}\")\n"
+    ]
+})
+
+# Cell 5: Execution block
+cells.append({
+    "cell_type": "code",
+    "execution_count": 5,
+    "metadata": {},
+    "outputs": [],
+    "source": [
+        "if __name__ == \"__main__\":\n",
+        "    cities = [\n",
+        "        (\"Boston\", \"MA\")\n",
+        "    ]\n",
+        "    for city, state in cities:\n",
+        "        scrape_city_state(city, state, max_pages=5)\n"
+    ]
+})
+
+notebook = {
+    "cells": cells,
+    "metadata": {
+        "kernelspec": {
+            "display_name": ".venv",
+            "language": "python",
+            "name": "python3"
+        },
+        "language_info": {
+            "codemirror_mode": {"name": "ipython", "version": 3},
+            "file_extension": ".py",
+            "mimetype": "text/x-python",
+            "name": "python",
+            "nbconvert_exporter": "python",
+            "pygments_lexer": "ipython3",
+            "version": "3.11.9"
+        }
+    },
+    "nbformat": 4,
+    "nbformat_minor": 5
+}
+
+with open("Boston_Metro_Data.ipynb", "w", encoding="utf-8") as f:
+    json.dump(notebook, f, indent=1)
+
+print("Notebook rebuilt successfully.")
