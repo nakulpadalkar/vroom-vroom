@@ -1,0 +1,9 @@
+metric,value
+rows,8629
+unique_urls,8629
+unique_vins,8595
+missing_sales_price,0
+missing_odometer_miles,0
+missing_year,0
+missing_make,0
+missing_model,0
