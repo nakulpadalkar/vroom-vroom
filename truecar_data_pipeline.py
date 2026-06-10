@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -40,9 +41,44 @@ HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0 Safari/537.36"
-    )
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Priority": "u=0, i",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
+
+
+def request_headers(referer: str | None = None) -> dict[str, str]:
+    headers = dict(HEADERS)
+    env_overrides = {
+        "TRUECAR_USER_AGENT": "User-Agent",
+        "TRUECAR_ACCEPT_LANGUAGE": "Accept-Language",
+        "TRUECAR_COOKIE": "Cookie",
+        "TRUECAR_SEC_CH_UA": "sec-ch-ua",
+        "TRUECAR_SEC_CH_UA_MOBILE": "sec-ch-ua-mobile",
+        "TRUECAR_SEC_CH_UA_PLATFORM": "sec-ch-ua-platform",
+    }
+    for env_name, header_name in env_overrides.items():
+        if os.getenv(env_name):
+            headers[header_name] = os.environ[env_name]
+
+    referer = os.getenv("TRUECAR_REFERER") or referer
+    if referer:
+        headers["Referer"] = referer
+        headers["Sec-Fetch-Site"] = "same-origin" if referer.startswith(BASE_URL) else "cross-site"
+    return headers
 
 
 def slug_city(city: str) -> str:
@@ -58,7 +94,7 @@ def truecar_listing_url(
     state: str,
     page: int,
     page_size: int = 100,
-    search_radius: int = 75,
+    search_radius: int = 250,
     exclude_expanded_delivery: bool = True,
 ) -> str:
     expanded_delivery = "true" if exclude_expanded_delivery else "false"
@@ -70,12 +106,19 @@ def truecar_listing_url(
     )
 
 
-def get_soup(url: str, delay_seconds: float = 0.5) -> BeautifulSoup | None:
+def get_soup(url: str, delay_seconds: float = 0.5, referer: str | None = None) -> BeautifulSoup | None:
     time.sleep(delay_seconds)
     try:
-        response = requests.get(url, headers=HEADERS, timeout=30)
+        response = requests.get(url, headers=request_headers(referer=referer), timeout=30)
         response.raise_for_status()
     except requests.RequestException as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 403:
+            print(
+                "Request blocked with HTTP 403. "
+                "Try TRUECAR_COOKIE/TRUECAR_USER_AGENT from an active browser session, "
+                "reduce request volume, or use a permitted data source."
+            )
         print(f"Request failed for {url}: {exc}")
         return None
     return BeautifulSoup(response.text, "html.parser")
@@ -86,12 +129,288 @@ def first_text(parent: BeautifulSoup, selector: str) -> str | None:
     return element.get_text(separator=" ", strip=True) if element else None
 
 
+def clean_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+
+
+def join_items(items: Iterable[str]) -> str:
+    return "; ".join(dict.fromkeys(item.strip() for item in items if item and item.strip()))
+
+
+def listing_card_containers(soup: BeautifulSoup) -> list:
+    cards = soup.select('[data-test="vehicleListingCard"]')
+    if cards:
+        return cards
+
+    containers = []
+    for link in soup.select('a[data-test="cardLinkCover"]'):
+        container = link.find_parent(lambda tag: tag.name in {"li", "div"} and tag.select_one('[data-test="cardLinkCover"]'))
+        if container:
+            containers.append(container)
+    return containers
+
+
+def card_position(card, fallback: int) -> int:
+    ordered_parent = card.find_parent("li", style=re.compile(r"order\s*:"))
+    if ordered_parent:
+        match = re.search(r"order\s*:\s*(\d+)", ordered_parent.get("style", ""))
+        if match:
+            return int(match.group(1))
+    return fallback
+
+
+def vehicle_summary_text(card) -> str | None:
+    title = first_text(card, '[data-test="vehicleCardInfo"]')
+    if not title:
+        return None
+    title_node = card.select_one('[data-test="vehicleCardInfo"]')
+    summary_parts = []
+    if title_node:
+        for sibling in title_node.find_all_next("div", limit=8):
+            text = sibling.get_text(separator=" ", strip=True)
+            if " mi" in text or "MPG" in text:
+                summary_parts.append(text)
+                break
+    return " ".join(summary_parts) or None
+
+
+def mileage_from_card(card) -> str | None:
+    direct = first_text(card, '[data-test="vehicleMileage"]')
+    if direct:
+        return direct
+    text = vehicle_summary_text(card) or card.get_text(separator=" ", strip=True)
+    match = re.search(r"([\d,]+)\s*mi\b", text, flags=re.IGNORECASE)
+    return f"{match.group(1)} miles" if match else None
+
+
+def dealer_from_card(card) -> str | None:
+    direct = first_text(card, '[data-test="vehicleCardFooter"]')
+    if direct:
+        return direct
+    delivery = first_text(card, '[data-test="vehicleCardDeliveryDetails"]')
+    if delivery:
+        return delivery
+    text = card.get_text(separator=" ", strip=True)
+    match = re.search(r"([A-Za-z0-9 .&'-]+)\s+-\s+([A-Za-z .'-]+,\s*[A-Z]{2})", text)
+    return match.group(0).strip() if match else None
+
+
+def vin_from_card(card, link_tag) -> str | None:
+    listing = card.select_one('[data-test="usedListing"]')
+    if listing and listing.get("data-test-item"):
+        return listing.get("data-test-item")
+
+    href = link_tag.get("href", "") if link_tag else ""
+    match = re.search(r"/listing/([^/]+)/", href)
+    if match:
+        return match.group(1)
+
+    text = card.get_text(separator=" ", strip=True)
+    match = re.search(r"\bVIN:\s*([A-HJ-NPR-Z0-9]{11,17})\b", text)
+    return match.group(1) if match else None
+
+
+def image_from_card(card) -> str | None:
+    image = card.select_one('[data-test="listingCardImage"]')
+    if not image:
+        return None
+    for attribute in ("src", "data-src"):
+        value = image.get(attribute)
+        if value:
+            return urljoin(BASE_URL, value)
+    srcset = image.get("srcset")
+    if srcset:
+        first_source = srcset.split(",", 1)[0].strip().split(" ", 1)[0]
+        if first_source:
+            return urljoin(BASE_URL, first_source)
+    return None
+
+
+def listing_row_from_card(
+    card,
+    city: str,
+    state: str,
+    key: str,
+    page: int,
+    fallback_position: int,
+    return_to: str | None = None,
+) -> dict:
+    link_tag = card.select_one('a[data-test="cardLinkCover"]')
+    relative_url = link_tag.get("href") if link_tag else None
+    row = {
+        "source_city": city,
+        "source_state": state.upper(),
+        "source_metro": key,
+        "source_page": page,
+        "source_position": card_position(card, fallback_position),
+        "return_to": return_to,
+        "url": urljoin(BASE_URL, relative_url) if relative_url else None,
+        "vin": vin_from_card(card, link_tag),
+        "listing_image_url": image_from_card(card),
+        "title": first_text(card, '[data-test="vehicleCardInfo"]'),
+        "mileage_listed": mileage_from_card(card),
+        "list_price_displayed": first_text(card, '[data-test="vehicleCardPricingPrice"]'),
+        "dealer_info": dealer_from_card(card),
+    }
+    trim = None
+    title_node = card.select_one('[data-test="vehicleCardInfo"]')
+    if title_node:
+        next_div = title_node.find_next("div")
+        if next_div:
+            trim = next_div.get_text(separator=" ", strip=True)
+    if trim and trim != row["title"]:
+        row["trim_card"] = trim
+    return row
+
+
+def extract_overview_details(soup: BeautifulSoup) -> dict[str, str]:
+    overview: dict[str, str] = {}
+    container = soup.select_one('[data-test="vehicleDetailsOverviewDetails"]')
+    if not container:
+        return overview
+
+    for item in container.find_all("div", recursive=False):
+        label = item.select_one(".text-muted")
+        value = item.select_one(".font-bold")
+        if not label or not value:
+            continue
+        label_text = label.get_text(separator=" ", strip=True)
+        value_text = value.get_text(separator=" ", strip=True)
+        if label_text and value_text:
+            overview[label_text] = value_text
+    return overview
+
+
+def apply_overview_details(car_data: dict, overview: dict[str, str]) -> None:
+    if not overview:
+        return
+
+    car_data["overview_json"] = json.dumps(overview, ensure_ascii=False)
+    field_map = {
+        "Exterior color": "exterior",
+        "Interior color": "interior",
+        "Mileage": "mileage_listed",
+        "MPG": "mpg",
+        "Transmission": "transmission",
+        "Drivetrain": "drivetrain",
+        "Engine": "engine",
+        "Fuel type": "fuel_type",
+    }
+    for label, output_name in field_map.items():
+        if overview.get(label) and not car_data.get(output_name):
+            car_data[output_name] = overview[label]
+
+    if overview.get("Location") and not car_data.get("dealer_info"):
+        car_data["dealer_info"] = overview["Location"]
+
+
+def extract_listing_info(soup: BeautifulSoup) -> dict[str, str]:
+    info: dict[str, str] = {}
+    container = soup.select_one('[data-test="vehicleDetailsOverviewListingInfo"]')
+    if not container:
+        return info
+
+    text = container.get_text(" ", strip=True)
+    vin_match = re.search(r"\bVIN\s+([A-HJ-NPR-Z0-9]{11,17})\b", text)
+    stock_match = re.search(r"\bStock\s+([A-Za-z0-9-]+)\b", text)
+    listed_match = re.search(r"\bListed\s+[^|]+$", text)
+    if vin_match:
+        info["vin"] = vin_match.group(1)
+    if stock_match:
+        info["stock_number"] = stock_match.group(1)
+    if listed_match:
+        info["listed_since"] = listed_match.group(0)
+    return info
+
+
+def extract_key_highlights(soup: BeautifulSoup) -> list[str]:
+    return [
+        item.get_text(separator=" ", strip=True)
+        for item in soup.select('[data-test="vehicleDetailsOverviewKeyHighlight"]')
+        if item.get_text(separator=" ", strip=True)
+    ]
+
+
+def extract_feature_groups(soup: BeautifulSoup) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    container = soup.select_one('[data-test="vehicleDetailsKeyFeatures"]')
+    if not container:
+        return groups
+
+    for group in container.select(".grid > div"):
+        heading = group.find("div", class_=lambda value: value and "font-bold" in value)
+        if not heading:
+            continue
+        heading_text = heading.get_text(separator=" ", strip=True)
+        features = [item.get_text(separator=" ", strip=True) for item in group.select("li")]
+        features = [feature for feature in features if feature]
+        if heading_text and features:
+            groups[heading_text] = features
+    return groups
+
+
+def extract_spec_groups(soup: BeautifulSoup) -> dict[str, dict[str, str]]:
+    specs: dict[str, dict[str, str]] = {}
+    for spec_list in soup.select(".list-striped"):
+        heading = spec_list.find_previous("div", class_=lambda value: value and "font-bold" in value)
+        heading_text = heading.get_text(separator=" ", strip=True) if heading else "Specifications"
+        values: dict[str, str] = {}
+        for item in spec_list.select("li"):
+            label = item.find("span")
+            value = item.find("div")
+            label_text = label.get_text(separator=" ", strip=True) if label else ""
+            value_text = value.get_text(separator=" ", strip=True) if value else ""
+            if label_text and value_text:
+                values[label_text] = value_text
+        if values:
+            specs[heading_text] = values
+    return specs
+
+
+def extract_history_details(soup: BeautifulSoup) -> dict[str, str | list[str]]:
+    history_section = soup.select_one("#history-tab")
+    if not history_section:
+        return {}
+
+    summary_items = [
+        item.get_text(separator=" ", strip=True)
+        for item in history_section.select("li")
+        if item.get_text(separator=" ", strip=True)
+    ]
+    report_link = history_section.find("a", href=re.compile(r"autocheck", re.IGNORECASE))
+    text = history_section.get_text(" ", strip=True)
+    date_match = re.search(r"Condition data as of\s+([0-9/]+)", text)
+    history: dict[str, str | list[str]] = {}
+    if summary_items:
+        history["summary"] = summary_items
+    if report_link and report_link.get("href"):
+        history["report_url"] = report_link["href"]
+    if date_match:
+        history["condition_data_as_of"] = date_match.group(1)
+    return history
+
+
+def extract_seller_notes(soup: BeautifulSoup) -> str | None:
+    seller_section = soup.select_one('[data-test="vdpSellerNotesSection"]')
+    if seller_section:
+        body = seller_section.select_one('[data-test="seeMoreBody"]')
+        if body:
+            return clean_text(body.get_text(separator=" ", strip=True))
+
+    seller_notes_header = soup.find("h2", string=re.compile(r"Seller Notes", re.IGNORECASE))
+    if seller_notes_header:
+        seller_div = seller_notes_header.find_next("div", class_="see-more")
+        if seller_div:
+            return clean_text(seller_div.get_text(separator=" ", strip=True))
+    return None
+
+
 def extract_listing_cards(
     city: str,
     state: str,
     max_pages: int = 20,
     page_size: int = 100,
-    search_radius: int = 75,
+    search_radius: int = 250,
     exclude_expanded_delivery: bool = True,
     delay_seconds: float = 0.5,
 ) -> pd.DataFrame:
@@ -107,35 +426,19 @@ def extract_listing_cards(
             search_radius=search_radius,
             exclude_expanded_delivery=exclude_expanded_delivery,
         )
-        soup = get_soup(url, delay_seconds=delay_seconds)
+        soup = get_soup(url, delay_seconds=delay_seconds, referer=BASE_URL)
         if soup is None:
             continue
 
-        link_tags = soup.select('a[data-test="cardLinkCover"]')
-        if not link_tags:
+        cards = listing_card_containers(soup)
+        if not cards:
             print(f"No listings found on page {page} for {city}, {state}. Stopping this city.")
             break
 
-        for tag in link_tags:
-            relative_url = tag.get("href")
-            if not relative_url:
+        for fallback_position, card in enumerate(cards, start=1):
+            row = listing_row_from_card(card, city, state, key, page, fallback_position, return_to=url)
+            if not row.get("url"):
                 continue
-
-            card = tag.find_parent("div", class_="card")
-            row = {
-                "source_city": city,
-                "source_state": state.upper(),
-                "source_metro": key,
-                "source_page": page,
-                "url": urljoin(BASE_URL, relative_url),
-            }
-
-            if card:
-                row["title"] = first_text(card, '[data-test="vehicleCardInfo"]')
-                row["mileage_listed"] = first_text(card, '[data-test="vehicleMileage"]')
-                row["list_price_displayed"] = first_text(card, '[data-test="vehicleCardPricingPrice"]')
-                row["dealer_info"] = first_text(card, '[data-test="vehicleCardFooter"]')
-
             rows.append(row)
 
     df = pd.DataFrame(rows)
@@ -146,7 +449,7 @@ def extract_listing_cards(
 
 def extract_detail_fields(entry: dict, delay_seconds: float = 0.5) -> dict:
     url = entry["url"]
-    soup = get_soup(url, delay_seconds=delay_seconds)
+    soup = get_soup(url, delay_seconds=delay_seconds, referer=entry.get("return_to") or BASE_URL)
     car_data = dict(entry)
 
     if soup is None:
@@ -154,6 +457,39 @@ def extract_detail_fields(entry: dict, delay_seconds: float = 0.5) -> dict:
         return car_data
 
     try:
+        overview = extract_overview_details(soup)
+        apply_overview_details(car_data, overview)
+        car_data.update({key: value for key, value in extract_listing_info(soup).items() if value})
+
+        key_highlights = extract_key_highlights(soup)
+        if key_highlights:
+            car_data["key_highlights"] = join_items(key_highlights)
+
+        feature_groups = extract_feature_groups(soup)
+        if feature_groups:
+            car_data["feature_groups_json"] = json.dumps(feature_groups, ensure_ascii=False)
+            car_data["popular_features"] = join_items(
+                feature for features in feature_groups.values() for feature in features
+            )
+
+        spec_groups = extract_spec_groups(soup)
+        if spec_groups:
+            car_data["specs_json"] = json.dumps(spec_groups, ensure_ascii=False)
+
+        history = extract_history_details(soup)
+        if history:
+            car_data["history_json"] = json.dumps(history, ensure_ascii=False)
+            if history.get("summary"):
+                car_data["vehicle_history_summary"] = join_items(history["summary"])
+            if history.get("report_url"):
+                car_data["vehicle_history_report_url"] = history["report_url"]
+            if history.get("condition_data_as_of"):
+                car_data["history_condition_data_as_of"] = history["condition_data_as_of"]
+
+        seller_notes = extract_seller_notes(soup)
+        if seller_notes:
+            car_data["seller_notes"] = seller_notes
+
         detail_container = soup.select_one("div.row.pt-3")
         if detail_container:
             for detail in detail_container.select("div.flex.items-center"):
@@ -162,8 +498,7 @@ def extract_detail_fields(entry: dict, delay_seconds: float = 0.5) -> dict:
                     continue
                 if ":" in text:
                     key, value = text.split(":", 1)
-                    clean_key = key.strip().lower().replace(" ", "_")
-                    car_data[clean_key] = value.strip()
+                    car_data[clean_key(key)] = value.strip()
                 elif "VIN" in text:
                     car_data["vin"] = text.split("VIN:", 1)[-1].strip()
                 elif "Stock Number" in text:
@@ -184,7 +519,8 @@ def extract_detail_fields(entry: dict, delay_seconds: float = 0.5) -> dict:
                         item.get_text(separator=" ", strip=True)
                         for item in feature_container.find_all("div", class_="flex items-center")
                     ]
-                    car_data[output_name] = "; ".join(item for item in features if item)
+                    if features and not car_data.get(output_name):
+                        car_data[output_name] = join_items(features)
 
         price_section = soup.find("div", {"id": "usedPriceGraph"})
         if price_section:
@@ -205,12 +541,6 @@ def extract_detail_fields(entry: dict, delay_seconds: float = 0.5) -> dict:
             if description:
                 car_data["price_description"] = description.get_text(separator=" ", strip=True)
 
-        seller_notes_header = soup.find("h2", string="Seller Notes")
-        if seller_notes_header:
-            seller_div = seller_notes_header.find_next("div", class_="see-more")
-            if seller_div:
-                car_data["seller_notes"] = seller_div.get_text(separator=" ", strip=True)
-
     except Exception as exc:  # noqa: BLE001 - notebooks should retain partial rows.
         car_data["scrape_error"] = str(exc)
 
@@ -222,7 +552,7 @@ def scrape_city(
     state: str,
     max_pages: int = 20,
     page_size: int = 100,
-    search_radius: int = 75,
+    search_radius: int = 250,
     exclude_expanded_delivery: bool = True,
     output_dir: Path | str = DATA_DIR,
     delay_seconds: float = 0.5,
@@ -263,7 +593,7 @@ def scrape_cities(
     cities: Iterable[tuple[str, str]],
     max_pages: int = 20,
     page_size: int = 100,
-    search_radius: int = 75,
+    search_radius: int = 250,
     exclude_expanded_delivery: bool = True,
     output_dir: Path | str = DATA_DIR,
     delay_seconds: float = 0.5,
@@ -301,9 +631,18 @@ def parse_integer(value) -> int | None:
 def parse_dealer_location(value) -> pd.Series:
     text = "" if pd.isna(value) else str(value)
     match = re.search(r"([A-Za-z .'-]+),\s*([A-Z]{2})\s*\((\d+)\s+miles?\s+away\)", text)
-    if not match:
-        return pd.Series([None, None, None])
-    return pd.Series([match.group(1).strip(), match.group(2), int(match.group(3))])
+    if match:
+        return pd.Series([match.group(1).strip(), match.group(2), float(match.group(3))])
+
+    match = re.search(r"([\d.]+)\s*mi(?:les?)?\s+away\s*[•\-]\s*([A-Za-z .'-]+),\s*([A-Z]{2})", text)
+    if match:
+        return pd.Series([match.group(2).strip(), match.group(3), float(match.group(1))])
+
+    match = re.search(r"([A-Za-z .'-]+),\s*([A-Z]{2}).*?([\d.]+)\s*mi(?:les?)?\s+away", text)
+    if match:
+        return pd.Series([match.group(1).strip(), match.group(2), float(match.group(3))])
+
+    return pd.Series([None, None, None])
 
 
 def split_title(value) -> pd.Series:
@@ -408,6 +747,7 @@ def clean_truecar_dataset(raw: pd.DataFrame) -> pd.DataFrame:
         ("year", "year_from_title"),
         ("make", "make_from_title"),
         ("model", "model_from_title"),
+        ("trim", "trim_card"),
         ("trim", "trim_from_title"),
     ]:
         if column not in df:
@@ -485,13 +825,22 @@ def clean_truecar_dataset(raw: pd.DataFrame) -> pd.DataFrame:
         "source_metro",
         "feature_count",
         "standard_feature_count",
+        "key_highlights",
         "popular_features",
         "standard_features",
         "options_and_packages",
+        "overview_json",
+        "feature_groups_json",
+        "specs_json",
+        "history_json",
+        "vehicle_history_summary",
+        "vehicle_history_report_url",
+        "history_condition_data_as_of",
         "seller_notes",
         "price_description",
         "listed_since",
         "stock_number",
+        "listing_image_url",
     ]
     columns = [column for column in preferred_columns if column in df.columns]
     columns += [column for column in df.columns if column not in columns]

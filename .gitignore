@@ -175,3 +175,7 @@ cython_debug/
 
 
 Assignment 3_AllisonLeigh.ipynb
+flask-server.*.log
+cache/
+*.sqlite3
+*.sqlite3-*

@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Vroom Vroom Advisor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="workspace">
+        <aside class="download-panel">
+          <div class="brand-block">
+            <img
+              src="https://images.unsplash.com/photo-1492144534655-ae79c964c9d7?auto=format&fit=crop&w=720&q=80"
+              alt="Sports car on a road"
+            >
+            <div>
+              <p class="eyebrow">Vroom Vroom</p>
+              <h1>Car buying advisor</h1>
+            </div>
+          </div>
+
+          <section class="refresh-block">
+            <form method="post" action="{{ url_for('refresh') }}" class="refresh-form">
+              <div class="refresh-header">
+                <div>
+                  <p class="eyebrow">Live inventory</p>
+                  <h2>Download inventory</h2>
+                </div>
+              </div>
+              <p class="download-note">Pull used-car listing cards first, then enrich details for the saved database. Buyer filters do not affect downloads.</p>
+              <label>
+                Market
+                <select name="refresh_metro">
+                  {% for market in refresh_markets %}
+                    <option value="{{ market.source_metro }}">{{ market.label }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <div class="refresh-grid">
+                <label>
+                  Pages
+                  <input name="max_pages" type="number" min="1" max="50" value="10">
+                </label>
+                <label>
+                  Page size
+                  <input name="page_size" type="number" min="10" max="100" step="10" value="100">
+                </label>
+                <label>
+                  Detail limit
+                  <input name="detail_limit" type="number" min="0" max="5000" step="25" value="0">
+                </label>
+                <label>
+                  Delay
+                  <input name="delay_seconds" type="number" min="0.25" max="5" step="0.25" value="0.75">
+                </label>
+              </div>
+              <input name="search_radius" type="hidden" value="250">
+              <div class="download-facts">
+                <span>250-mile radius</span>
+                <span>Used listings</span>
+                <span>0 details = all cards</span>
+              </div>
+              <button type="submit" class="secondary-button">Download data</button>
+            </form>
+
+            {% if refresh_result %}
+              <div class="refresh-result {{ refresh_result.status }}">
+                {{ refresh_result.message }}
+              </div>
+            {% endif %}
+
+            {% if recent_runs %}
+              <div class="recent-runs">
+                {% for run in recent_runs[:3] %}
+                  <div>
+                    <span>{{ run.city }}, {{ run.state }}</span>
+                    <strong>{{ run.row_count }} {{ run.status }}</strong>
+                  </div>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </section>
+        </aside>
+
+        <aside class="search-panel">
+          <div class="search-heading">
+            <p class="eyebrow">Search preferences</p>
+            <h2>Find the best fit</h2>
+          </div>
+          <form method="post" class="filters">
+            <label>
+              Search
+              <input name="query" type="search" placeholder="Search make, model, or keyword" value="{{ preferences.query }}">
+            </label>
+
+            <fieldset class="range-control" data-range-group data-format="currency">
+              <legend>Price range</legend>
+              <div class="range-heading">
+                <output data-range-output></output>
+              </div>
+              <div class="range-sliders">
+                <input name="min_price" type="range" min="{{ options.min_price }}" max="{{ options.max_price }}" step="500" value="{{ preferences.min_price }}" data-range-min>
+                <input name="max_price" type="range" min="{{ options.min_price }}" max="{{ options.max_price }}" step="500" value="{{ preferences.max_price }}" data-range-max>
+              </div>
+              <div class="range-fields">
+                <label>
+                  From
+                  <input name="min_price" type="number" min="{{ options.min_price }}" max="{{ options.max_price }}" step="500" value="{{ preferences.min_price }}" data-range-min-field>
+                </label>
+                <label>
+                  To
+                  <input name="max_price" type="number" min="{{ options.min_price }}" max="{{ options.max_price }}" step="500" value="{{ preferences.max_price }}" data-range-max-field>
+                </label>
+              </div>
+            </fieldset>
+
+            <label>
+              Market
+              <select name="metro">
+                <option value="any">Any market</option>
+                {% for metro in options.metros %}
+                  <option value="{{ metro.source_metro }}" {% if preferences.metro == metro.source_metro %}selected{% endif %}>
+                    {{ metro.source_city }}, {{ metro.source_state }}
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <fieldset class="range-control" data-range-group data-format="plain">
+              <legend>Year range</legend>
+              <div class="range-heading">
+                <output data-range-output></output>
+              </div>
+              <div class="range-sliders">
+                <input name="min_year" type="range" min="{{ options.min_year }}" max="{{ options.max_year }}" step="1" value="{{ preferences.min_year }}" data-range-min>
+                <input name="max_year" type="range" min="{{ options.min_year }}" max="{{ options.max_year }}" step="1" value="{{ preferences.max_year }}" data-range-max>
+              </div>
+              <div class="range-fields">
+                <label>
+                  From
+                  <input name="min_year" type="number" min="{{ options.min_year }}" max="{{ options.max_year }}" step="1" value="{{ preferences.min_year }}" data-range-min-field>
+                </label>
+                <label>
+                  To
+                  <input name="max_year" type="number" min="{{ options.min_year }}" max="{{ options.max_year }}" step="1" value="{{ preferences.max_year }}" data-range-max-field>
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="range-control" data-range-group data-format="miles">
+              <legend>Mileage range</legend>
+              <div class="range-heading">
+                <output data-range-output></output>
+              </div>
+              <div class="range-sliders">
+                <input name="min_mileage" type="range" min="{{ options.min_mileage }}" max="{{ options.max_mileage }}" step="1000" value="{{ preferences.min_mileage }}" data-range-min>
+                <input name="max_mileage" type="range" min="{{ options.min_mileage }}" max="{{ options.max_mileage }}" step="1000" value="{{ preferences.max_mileage }}" data-range-max>
+              </div>
+              <div class="range-fields">
+                <label>
+                  From
+                  <input name="min_mileage" type="number" min="{{ options.min_mileage }}" max="{{ options.max_mileage }}" step="1000" value="{{ preferences.min_mileage }}" data-range-min-field>
+                </label>
+                <label>
+                  To
+                  <input name="max_mileage" type="number" min="{{ options.min_mileage }}" max="{{ options.max_mileage }}" step="1000" value="{{ preferences.max_mileage }}" data-range-max-field>
+                </label>
+              </div>
+            </fieldset>
+
+            <label>
+              Max dealer distance
+              <input name="max_distance" type="number" min="1" step="25" value="{{ preferences.max_distance }}">
+            </label>
+
+            <label>
+              Body
+              <select name="body_style">
+                <option value="any">Any body</option>
+                {% for style in options.body_styles %}
+                  <option value="{{ style }}" {% if preferences.body_style == style %}selected{% endif %}>{{ style|title }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <fieldset>
+              <legend>Fuel</legend>
+              <div class="option-grid compact" data-any-group>
+                <label class="check">
+                  <input name="fuel_types" value="any" type="checkbox" data-any-option {% if "any" in preferences.fuel_types %}checked{% endif %}>
+                  <span>Any fuel</span>
+                </label>
+                {% for fuel in options.fuels %}
+                  <label class="check">
+                    <input name="fuel_types" value="{{ fuel }}" type="checkbox" data-specific-option {% if fuel in preferences.fuel_types %}checked{% endif %}>
+                    <span>{{ fuel }}</span>
+                  </label>
+                {% endfor %}
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Buying priorities</legend>
+              <div class="option-grid priority-grid" data-max-checked="3">
+                {% for priority, label in options.priorities.items() %}
+                  <label class="check">
+                    <input name="priorities" value="{{ priority }}" type="checkbox" {% if priority in preferences.priorities %}checked{% endif %}>
+                    <span>{{ label }}</span>
+                  </label>
+                {% endfor %}
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Must-have features</legend>
+              <div class="option-grid">
+                {% set labels = {
+                  "apple_carplay": "CarPlay",
+                  "awd": "AWD",
+                  "backup_camera": "Camera",
+                  "blind_spot": "Blind spot",
+                  "heated_seats": "Heated seats",
+                  "lane_assist": "Lane assist",
+                  "moonroof": "Moonroof",
+                  "third_row": "Third row"
+                } %}
+                {% for feature in options.features %}
+                  <label class="check">
+                    <input name="must_haves" value="{{ feature }}" type="checkbox" {% if feature in preferences.must_haves %}checked{% endif %}>
+                    <span>{{ labels[feature] }}</span>
+                  </label>
+                {% endfor %}
+              </div>
+            </fieldset>
+
+            <label class="toggle">
+              <input name="live_lookup" type="checkbox" {% if preferences.live_lookup %}checked{% endif %}>
+              <span>Use live NHTSA web data</span>
+            </label>
+
+            <button type="submit">Find my car</button>
+          </form>
+        </aside>
+
+        <section class="results-panel">
+          {% if results %}
+            <header class="results-header">
+              <div>
+                <p class="eyebrow">Ranked recommendations</p>
+                <h2>{{ results.market_summary["count"] }} matches from {{ results.source_count }} listings</h2>
+              </div>
+              <div class="status-pill {% if results.live_status == 'fresh' %}fresh{% endif %}">
+                Live data: {{ results.live_status|default("skipped") }}
+              </div>
+            </header>
+
+            <div class="results-toolbar">
+              <div class="filter-chips">
+                {% if preferences.query %}<span>{{ preferences.query }}</span>{% endif %}
+                <span>${{ "{:,}".format(preferences.min_price) }} to ${{ "{:,}".format(preferences.max_price) }}</span>
+                <span>{{ preferences.min_year }} to {{ preferences.max_year }}</span>
+                <span>{{ "{:,}".format(preferences.min_mileage) }} to {{ "{:,}".format(preferences.max_mileage) }} mi</span>
+                {% if preferences.metro != "any" %}<span>{{ preferences.metro.replace("_", " ")|title }}</span>{% endif %}
+                {% for fuel in preferences.fuel_types %}
+                  {% if fuel != "any" %}<span>{{ fuel }}</span>{% endif %}
+                {% endfor %}
+              </div>
+              <div class="sort-label">Sort by recommended</div>
+            </div>
+
+            {% if results.relaxations %}
+              <div class="notice">{{ results.relaxations[0] }}</div>
+            {% endif %}
+
+            {% if results.market_summary %}
+              <div class="summary-grid">
+                <div><span>Median price</span><strong>${{ "{:,}".format(results.market_summary.median_price) }}</strong></div>
+                <div><span>Median miles</span><strong>{{ "{:,}".format(results.market_summary.median_mileage) }}</strong></div>
+                <div><span>Median year</span><strong>{{ results.market_summary.median_year }}</strong></div>
+                <div><span>Below market</span><strong>{{ results.market_summary.below_market_count }}</strong></div>
+              </div>
+            {% endif %}
+
+            <div class="cards">
+              {% for car in results.recommendations %}
+                <article class="car-card">
+                  <div class="vehicle-media">
+                    {% if car.image_url %}
+                      <img src="{{ car.image_url }}" alt="{{ car.title }}">
+                    {% else %}
+                      <div class="vehicle-placeholder">
+                        <span>{{ car.make[:1] }}{{ car.model[:1] }}</span>
+                      </div>
+                    {% endif %}
+                    <button type="button" class="save-button" aria-label="Save {{ car.title }}">&#9825;</button>
+                    <span class="deal-badge {{ car.price_tier }}">{{ car.deal_label }}</span>
+                  </div>
+
+                  <div class="vehicle-body">
+                    <div class="vehicle-title-row">
+                      <div>
+                        <p class="score">{{ car.score }} fit score</p>
+                        <h3>{{ car.title }}</h3>
+                        {% if car.trim %}<p class="trim-line">{{ car.trim }}</p>{% endif %}
+                      </div>
+                      <div class="price">${{ "{:,}".format(car.price) }}</div>
+                    </div>
+
+                    <p class="payment-line">Est. ${{ "{:,}".format(car.monthly_payment) }}/mo &middot; includes basic tax estimate</p>
+
+                    <div class="vehicle-specs">
+                      <span>{{ car.year }}</span>
+                      <span>{{ "{:,}".format(car.odometer_miles) }} mi</span>
+                      <span>{{ car.fuel_type }}</span>
+                      <span>{{ car.body_style|title }}</span>
+                    </div>
+
+                    <div class="fulfillment-line">
+                      <span>Free shipping</span>
+                      <strong>{% if car.distance is not none %}{{ "{:,}".format(car.distance) }} mi away{% else %}Dealer distance unknown{% endif %}</strong>
+                    </div>
+
+                    <div class="dealer-line">
+                      {{ car.dealer }}{% if car.dealer_city %} &middot; {{ car.dealer_city }}, {{ car.dealer_state }}{% endif %}
+                    </div>
+
+                    <ul class="reasons">
+                      {% for reason in car.reasons[:3] %}
+                        <li>{{ reason }}</li>
+                      {% endfor %}
+                    </ul>
+
+                    <div class="details">
+                      <span>${{ "{:,}".format(car.estimated_tco) }} 5-year cost</span>
+                      {% if car.value_delta and car.value_delta > 0 %}
+                        <span>${{ "{:,}".format(car.value_delta) }} market cushion</span>
+                      {% endif %}
+                      {% if car.live.get("safety") %}
+                        <span>NHTSA overall: {{ car.live.safety.overall }}</span>
+                      {% endif %}
+                    </div>
+
+                    <div class="actions">
+                      {% if car.url %}
+                        <a href="{{ car.url }}" target="_blank" rel="noreferrer">View listing</a>
+                      {% endif %}
+                      {% if car.vin %}
+                        <span>VIN {{ car.vin }}</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+
+            {% if not results.recommendations %}
+              <div class="empty-state">
+                <h2>No matches yet</h2>
+                <p>Try a higher budget, wider distance, or fewer must-have features.</p>
+              </div>
+            {% endif %}
+          {% else %}
+            <div class="empty-state start">
+              <p class="eyebrow">Ready when you are</p>
+              <h2>Tell me what you care about and I'll rank the best used-car fits.</h2>
+              <p>The app scores local listing data, value against market average, mileage, age, fuel preferences, dealer distance, feature matches, and optional live NHTSA data.</p>
+            </div>
+          {% endif %}
+        </section>
+      </section>
+    </main>
+    <script>
+      const numberFormatter = new Intl.NumberFormat("en-US");
+
+      document.querySelectorAll("[data-range-group]").forEach((group) => {
+        const minSlider = group.querySelector("[data-range-min]");
+        const maxSlider = group.querySelector("[data-range-max]");
+        const minField = group.querySelector("[data-range-min-field]");
+        const maxField = group.querySelector("[data-range-max-field]");
+        const output = group.querySelector("[data-range-output]");
+        const sliderTrack = group.querySelector(".range-sliders");
+        const format = group.dataset.format;
+
+        const formatValue = (value) => {
+          const number = Number(value);
+          if (format === "currency") {
+            return `$${numberFormatter.format(number)}`;
+          }
+          if (format === "miles") {
+            return `${numberFormatter.format(number)} mi`;
+          }
+          return numberFormatter.format(number);
+        };
+
+        const clampPair = (source) => {
+          let minValue = Number(minSlider.value);
+          let maxValue = Number(maxSlider.value);
+          if (minValue > maxValue) {
+            if (source === minSlider || source === minField) {
+              maxValue = minValue;
+            } else {
+              minValue = maxValue;
+            }
+          }
+          minSlider.value = minValue;
+          maxSlider.value = maxValue;
+          minField.value = minValue;
+          maxField.value = maxValue;
+          const sliderMin = Number(minSlider.min);
+          const sliderMax = Number(minSlider.max);
+          const sliderSpan = Math.max(sliderMax - sliderMin, 1);
+          const lowPercent = ((minValue - sliderMin) / sliderSpan) * 100;
+          const highPercent = ((maxValue - sliderMin) / sliderSpan) * 100;
+          sliderTrack.style.setProperty("--range-low", `${lowPercent}%`);
+          sliderTrack.style.setProperty("--range-high", `${highPercent}%`);
+          minSlider.style.zIndex = minValue > sliderMax - sliderSpan * 0.08 ? "3" : "2";
+          maxSlider.style.zIndex = "2";
+          output.textContent = `${formatValue(minValue)} to ${formatValue(maxValue)}`;
+        };
+
+        [
+          [minSlider, minField],
+          [maxSlider, maxField],
+          [minField, minSlider],
+          [maxField, maxSlider],
+        ].forEach(([source, target]) => {
+          source.addEventListener("input", () => {
+            target.value = source.value;
+            clampPair(source);
+          });
+        });
+
+        clampPair();
+      });
+
+      document.querySelectorAll("[data-any-group]").forEach((group) => {
+        const anyOption = group.querySelector("[data-any-option]");
+        const specificOptions = [...group.querySelectorAll("[data-specific-option]")];
+        const syncFuelChoices = (source) => {
+          if (source === anyOption && anyOption.checked) {
+            specificOptions.forEach((option) => {
+              option.checked = false;
+            });
+          }
+          if (source !== anyOption && specificOptions.some((option) => option.checked)) {
+            anyOption.checked = false;
+          }
+          if (!anyOption.checked && !specificOptions.some((option) => option.checked)) {
+            anyOption.checked = true;
+          }
+        };
+        group.addEventListener("change", (event) => syncFuelChoices(event.target));
+      });
+
+      document.querySelectorAll("[data-max-checked]").forEach((group) => {
+        const maxChecked = Number(group.dataset.maxChecked);
+        const inputs = [...group.querySelectorAll("input[type='checkbox']")];
+        const syncPriorityChoices = () => {
+          const checked = inputs.filter((input) => input.checked);
+          inputs.forEach((input) => {
+            input.disabled = !input.checked && checked.length >= maxChecked;
+          });
+        };
+        group.addEventListener("change", syncPriorityChoices);
+        syncPriorityChoices();
+      });
+    </script>
+  </body>
+</html>
