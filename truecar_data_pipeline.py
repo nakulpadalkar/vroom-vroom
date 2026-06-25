@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import time
 from pathlib import Path
@@ -106,8 +107,20 @@ def truecar_listing_url(
     )
 
 
-def get_soup(url: str, delay_seconds: float = 0.5, referer: str | None = None) -> BeautifulSoup | None:
-    time.sleep(delay_seconds)
+def sleep_for_delay(delay_seconds: float | tuple[float, float]) -> None:
+    if isinstance(delay_seconds, tuple):
+        low, high = delay_seconds
+        time.sleep(random.uniform(min(low, high), max(low, high)))
+    else:
+        time.sleep(delay_seconds)
+
+
+def get_soup(
+    url: str,
+    delay_seconds: float | tuple[float, float] = 0.5,
+    referer: str | None = None,
+) -> BeautifulSoup | None:
+    sleep_for_delay(delay_seconds)
     try:
         response = requests.get(url, headers=request_headers(referer=referer), timeout=30)
         response.raise_for_status()
@@ -412,7 +425,7 @@ def extract_listing_cards(
     page_size: int = 100,
     search_radius: int = 250,
     exclude_expanded_delivery: bool = True,
-    delay_seconds: float = 0.5,
+    delay_seconds: float | tuple[float, float] = 0.5,
 ) -> pd.DataFrame:
     rows: list[dict[str, str | int | None]] = []
     key = city_key(city, state)
@@ -428,7 +441,7 @@ def extract_listing_cards(
         )
         soup = get_soup(url, delay_seconds=delay_seconds, referer=BASE_URL)
         if soup is None:
-            continue
+            break
 
         cards = listing_card_containers(soup)
         if not cards:
@@ -447,7 +460,7 @@ def extract_listing_cards(
     return df
 
 
-def extract_detail_fields(entry: dict, delay_seconds: float = 0.5) -> dict:
+def extract_detail_fields(entry: dict, delay_seconds: float | tuple[float, float] = 0.5) -> dict:
     url = entry["url"]
     soup = get_soup(url, delay_seconds=delay_seconds, referer=entry.get("return_to") or BASE_URL)
     car_data = dict(entry)

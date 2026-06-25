@@ -1,0 +1,9 @@
+city,state,source_metro,listing_count,links_json,links_csv,detail_rows
+Boston,MA,boston_ma,0,./data\truecar_links_boston_ma.json,./data\truecar_links_boston_ma.csv,0
+Worcester,MA,worcester_ma,0,./data\truecar_links_worcester_ma.json,./data\truecar_links_worcester_ma.csv,0
+Providence,RI,providence_ri,0,./data\truecar_links_providence_ri.json,./data\truecar_links_providence_ri.csv,0
+Manchester,NH,manchester_nh,0,./data\truecar_links_manchester_nh.json,./data\truecar_links_manchester_nh.csv,0
+Nashua,NH,nashua_nh,0,./data\truecar_links_nashua_nh.json,./data\truecar_links_nashua_nh.csv,0
+Lowell,MA,lowell_ma,0,./data\truecar_links_lowell_ma.json,./data\truecar_links_lowell_ma.csv,0
+Hartford,CT,hartford_ct,0,./data\truecar_links_hartford_ct.json,./data\truecar_links_hartford_ct.csv,0
+Springfield,MA,springfield_ma,0,./data\truecar_links_springfield_ma.json,./data\truecar_links_springfield_ma.csv,0
