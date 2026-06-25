@@ -211,6 +211,12 @@ h3 {
   border-color: #a6f4c5;
 }
 
+.refresh-result.scheduled {
+  color: #1849a9;
+  background: #edf4ff;
+  border-color: #c8ddff;
+}
+
 .refresh-result.failed,
 .refresh-result.empty {
   color: #912018;

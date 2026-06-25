@@ -29,40 +29,48 @@
                   <h2>Download inventory</h2>
                 </div>
               </div>
-              <p class="download-note">Pull used-car listing cards first, then enrich details for the saved database. Buyer filters do not affect downloads.</p>
+              <p class="download-note">Choose a city and the app will start a paced background download later. Buyer filters do not affect downloads.</p>
               <label>
-                Market
+                Source
+                <select name="inventory_source">
+                  <option value="truecar">TrueCar city search</option>
+                  <option value="herb_chambers">Herb Chambers used inventory</option>
+                  <option value="herb_chambers_new">Herb Chambers new inventory</option>
+                </select>
+              </label>
+              <label>
+                TrueCar market
                 <select name="refresh_metro">
                   {% for market in refresh_markets %}
                     <option value="{{ market.source_metro }}">{{ market.label }}</option>
                   {% endfor %}
                 </select>
               </label>
-              <div class="refresh-grid">
-                <label>
-                  Pages
-                  <input name="max_pages" type="number" min="1" max="50" value="10">
-                </label>
-                <label>
-                  Page size
-                  <input name="page_size" type="number" min="10" max="100" step="10" value="100">
-                </label>
-                <label>
-                  Detail limit
-                  <input name="detail_limit" type="number" min="0" max="5000" step="25" value="0">
-                </label>
-                <label>
-                  Delay
-                  <input name="delay_seconds" type="number" min="0.25" max="5" step="0.25" value="0.75">
-                </label>
-              </div>
+              <label>
+                Start after minutes
+                <input name="schedule_delay_minutes" type="number" min="0" max="60" step="5" value="60">
+              </label>
+              <input name="max_pages" type="hidden" value="10">
+              <input name="page_size" type="hidden" value="25">
               <input name="search_radius" type="hidden" value="250">
+              <input name="detail_limit" type="hidden" value="0">
+              <input name="herb_inventory_url" type="hidden" value="https://www.herbchambers.com/used-inventory/index.htm?geoZip=02151&geoRadius=0">
+              <input name="herb_chambers_url" type="hidden" value="https://www.herbchambers.com/used-inventory/index.htm?geoZip=02151&geoRadius=0">
+              <input name="herb_chambers_new_url" type="hidden" value="https://www.herbchambers.com/new-inventory/index.htm?geoZip=02151&geoRadius=0">
+              <input name="herb_max_pages" type="hidden" value="1">
+              <input name="listing_delay_min" type="hidden" value="8">
+              <input name="listing_delay_max" type="hidden" value="25">
+              <input name="detail_delay_min" type="hidden" value="3">
+              <input name="detail_delay_max" type="hidden" value="10">
               <div class="download-facts">
                 <span>250-mile radius</span>
-                <span>Used listings</span>
-                <span>0 details = all cards</span>
+                <span>25 cards per page</span>
+                <span>Herb Chambers ready</span>
+                <span>New and used</span>
+                <span>Random pauses</span>
+                <span>Stops on block</span>
               </div>
-              <button type="submit" class="secondary-button">Download data</button>
+              <button type="submit" class="secondary-button">Schedule download</button>
             </form>
 
             {% if refresh_result %}

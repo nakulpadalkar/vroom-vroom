@@ -31,9 +31,21 @@ The scraper sends a fuller browser-style header set by default, but a `403` can 
 Refresh TrueCar data from the command line:
 
 ```powershell
-.\.venv\Scripts\python.exe truecar_live.py --city Boston --state MA --max-pages 10 --page-size 100 --search-radius 250 --detail-limit 0
+.\.venv\Scripts\python.exe truecar_live.py --city Boston --state MA --max-pages 10 --page-size 25 --search-radius 250 --detail-limit 0 --start-delay-seconds 7200
 ```
 
-The refresh/download flow is intentionally separate from the search filters. It pulls used-car inventory for the selected market across a 250-mile radius; `--detail-limit 0` means enrich every listing card found.
+The refresh/download flow is intentionally separate from the search filters. It pulls used-car inventory for the selected market across a 250-mile radius; `--detail-limit 0` means enrich every listing card found. Delayed downloads use randomized pauses by default: 8-25 seconds between listing pages and 3-10 seconds between detail pages, and stop when a page is blocked.
+
+Herb Chambers used inventory can be downloaded separately:
+
+```powershell
+.\.venv\Scripts\python.exe herb_chambers_live.py --inventory-url "https://www.herbchambers.com/used-inventory/index.htm?geoZip=02151&geoRadius=0" --max-pages 1 --start-delay-seconds 7200
+```
+
+Herb Chambers new inventory uses the same parser with the new inventory endpoint:
+
+```powershell
+.\.venv\Scripts\python.exe herb_chambers_live.py --inventory-url "https://www.herbchambers.com/new-inventory/index.htm?geoZip=02151&geoRadius=0" --max-pages 1 --start-delay-seconds 7200
+```
 
 The app ranks cars from `data/truecar_clean_combined.csv` against your price, year, and mileage ranges, location, multiple fuel types, body style, feature, and up to three buying-priority preferences. When enabled, it enriches top results with live NHTSA safety and VIN data and caches those responses in `cache/`.
